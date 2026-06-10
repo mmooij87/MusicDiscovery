@@ -48,10 +48,17 @@ export const podcastAdapter: SourceAdapter = {
     };
 
     let inspected = 0;
+    const maxAgeDays = (source.config.episodeMaxAgeDays as number) ?? 90;
     for (const item of items) {
       if (inspected >= maxEpisodes) break;
       const externalId = itemGuid(item);
       if (!externalId || alreadyProcessed.has(externalId)) continue;
+      // don't keep digging into old episodes whose tracklists have rolled
+      // off the podcast's website
+      if (item.pubDate) {
+        const age = Date.now() - new Date(item.pubDate).getTime();
+        if (Number.isFinite(age) && age > maxAgeDays * 24 * 3600 * 1000) continue;
+      }
       inspected++;
 
       const episodeTitle = item.title ?? "Untitled episode";

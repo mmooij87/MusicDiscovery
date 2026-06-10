@@ -45,28 +45,43 @@ async function fetchDirect(url: string, init?: RequestInit): Promise<string> {
   throw lastError;
 }
 
+/** Challenge pages often come back with HTTP 200; recognize them by body. */
+function looksLikeBotChallenge(html: string): boolean {
+  return /just a moment|cf-browser-verification|checking your browser|attention required|enable javascript and cookies|__cf_chl/i.test(
+    html.slice(0, 3000),
+  );
+}
+
 /**
  * Fetch a page's HTML. When the site's bot protection blocks the direct
- * request (403/429/503 — datacenter IPs are often blanket-blocked), retry
- * once through the public Jina reader proxy, which fetches the page from
- * its own infrastructure and can return the raw HTML.
+ * request — a 403/429/503, or a challenge page served with HTTP 200 —
+ * retry once through the public Jina reader proxy, which fetches the page
+ * from its own infrastructure and can return the raw HTML.
  */
 export async function fetchText(url: string, init?: RequestInit): Promise<string> {
+  let directError: unknown = null;
   try {
-    return await fetchDirect(url, init);
+    const direct = await fetchDirect(url, init);
+    if (!looksLikeBotChallenge(direct)) return direct;
   } catch (err) {
+    directError = err;
     const blocked = err instanceof HttpError && [403, 429, 503].includes(err.status);
     if (!blocked || !/^https?:\/\//.test(url)) throw err;
-    try {
-      const res = await fetch(`https://r.jina.ai/${url}`, {
-        headers: { "X-Return-Format": "html", Accept: "text/html" },
-        signal: AbortSignal.timeout(45_000),
-      });
-      if (!res.ok) throw new HttpError(res.status, `r.jina.ai/${url}`);
-      return await res.text();
-    } catch {
-      throw err; // report the original blocking error
+  }
+  try {
+    const res = await fetch(`https://r.jina.ai/${url}`, {
+      headers: { "X-Return-Format": "html", Accept: "text/html" },
+      signal: AbortSignal.timeout(45_000),
+    });
+    if (!res.ok) throw new HttpError(res.status, `r.jina.ai/${url}`);
+    const text = await res.text();
+    // an empty shell or another challenge page means the mirror failed too
+    if (looksLikeBotChallenge(text) || text.length < 500) {
+      throw new Error(`mirror returned no usable content for ${url}`);
     }
+    return text;
+  } catch (mirrorError) {
+    throw directError ?? new Error(`Bot challenge for ${url} (mirror also failed: ${mirrorError})`);
   }
 }
 

@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { fetchText } from "@/lib/http";
+import { fetchJson, fetchText } from "@/lib/http";
 import { normKey } from "@/lib/normalize";
 import type { AdapterResult, SourceAdapter, SourceRecord } from "./types";
 
@@ -9,8 +9,9 @@ import type { AdapterResult, SourceAdapter, SourceRecord } from "./types";
  * the source URL is replaced with the current year, so the source keeps
  * following "this year's top songs" forever.
  *
- * RYM has no API and is protective of its pages; parsing is layered and a
- * failure surfaces a warning with an HTML snippet so the parser can be fixed.
+ * RYM blocks datacenter traffic aggressively, so when the live page (and the
+ * reader mirror) won't load, the adapter falls back to the latest Wayback
+ * Machine snapshot — fine for a chart that shifts slowly.
  */
 
 export const rymChartAdapter: SourceAdapter = {
@@ -19,8 +20,31 @@ export const rymChartAdapter: SourceAdapter = {
     const topSongs = (source.config.topSongs as number) ?? 20;
     const url = source.url.replace("{year}", String(new Date().getFullYear()));
 
-    const html = await fetchText(url);
-    const entries = parseRymChart(html).slice(0, topSongs);
+    let html = "";
+    let entries: RymEntry[] = [];
+    try {
+      html = await fetchText(url);
+      entries = parseRymChart(html);
+    } catch (err) {
+      result.warnings.push(`Live fetch of ${url} failed: ${err}`);
+    }
+
+    if (entries.length === 0) {
+      try {
+        const snapshot = await fetchWaybackSnapshot(url);
+        entries = parseRymChart(snapshot.html);
+        if (entries.length > 0) {
+          result.warnings.push(
+            `Used Wayback Machine snapshot ${snapshot.timestamp} for ${url} (live page blocked).`,
+          );
+        } else {
+          html = snapshot.html;
+        }
+      } catch (err) {
+        result.warnings.push(`Wayback fallback for ${url} failed: ${err}`);
+      }
+    }
+
     if (entries.length === 0) {
       result.warnings.push(
         `RYM chart parser found no songs at ${url}. HTML starts with: ${html.slice(0, 300)}`,
@@ -28,7 +52,7 @@ export const rymChartAdapter: SourceAdapter = {
       return result;
     }
 
-    for (const entry of entries) {
+    for (const entry of entries.slice(0, topSongs)) {
       const externalId = entry.id ?? normKey(entry.artist, entry.title);
       if (alreadyProcessed.has(externalId)) continue;
       result.candidates.push({
@@ -49,6 +73,20 @@ export interface RymEntry {
   artist: string;
   title: string;
   id: string | null;
+}
+
+/** Latest Wayback Machine capture of a URL, served as the original HTML. */
+async function fetchWaybackSnapshot(url: string): Promise<{ html: string; timestamp: string }> {
+  const availability = await fetchJson<{
+    archived_snapshots?: { closest?: { url?: string; timestamp?: string } };
+  }>(`https://archive.org/wayback/available?url=${encodeURIComponent(url)}`);
+  const closest = availability.archived_snapshots?.closest;
+  if (!closest?.url) throw new Error("no snapshot available");
+  // the id_ flag serves the page as captured, without the Wayback toolbar
+  const snapshotUrl = closest.url
+    .replace(/^http:/, "https:")
+    .replace(/\/(\d{14})\//, "/$1id_/");
+  return { html: await fetchText(snapshotUrl), timestamp: closest.timestamp ?? "unknown" };
 }
 
 export function parseRymChart(html: string): RymEntry[] {
