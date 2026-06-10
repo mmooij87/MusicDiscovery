@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 import type { AnyNode } from "domhandler";
-import { fetchText, mapLimit } from "@/lib/http";
+import { fetchText, mapLimit, politePause } from "@/lib/http";
 import type { AdapterResult, Candidate, SourceAdapter, SourceRecord } from "./types";
 
 /**
@@ -31,8 +31,9 @@ export const musicmeterAdapter: SourceAdapter = {
     }
 
     const fresh = albums.filter((a) => !alreadyProcessed.has(a.albumId));
-    const perAlbum = await mapLimit(fresh, 3, async (album) => {
+    const perAlbum = await mapLimit(fresh, 2, async (album) => {
       try {
+        await politePause();
         const statsHtml = await fetchText(`${BASE}/album/${album.albumId}/stats/`);
         const meta = parseStatsTitle(statsHtml);
         const artist = meta?.artist ?? album.artist;

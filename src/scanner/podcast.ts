@@ -1,6 +1,6 @@
 import * as cheerio from "cheerio";
 import { XMLParser } from "fast-xml-parser";
-import { fetchText } from "@/lib/http";
+import { fetchText, politePause } from "@/lib/http";
 import { normalize, similarity } from "@/lib/normalize";
 import type { AdapterResult, SourceAdapter, SourceRecord } from "./types";
 
@@ -76,6 +76,7 @@ export const podcastAdapter: SourceAdapter = {
         ].slice(0, 4);
         for (const pageUrl of pageUrls) {
           try {
+            await politePause();
             const pageHtml = await fetchText(pageUrl);
             tracks = extractTracklistFromPage(pageHtml);
             if (tracks.length > 0) break;
