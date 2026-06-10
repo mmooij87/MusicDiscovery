@@ -1,31 +1,18 @@
 /**
- * Seeds the configured music sources. Safe to run repeatedly — existing
- * sources (matched by name) are left untouched.
+ * Creates the schema (if missing) and registers the sources from
+ * src/db/defaultSources.ts. Safe to run repeatedly — existing sources
+ * (matched by name) are left untouched.
  *
  *   npm run seed
  */
 import { eq } from "drizzle-orm";
 import { db, schema } from "../src/db";
-
-const SOURCES: (typeof schema.sources.$inferInsert)[] = [
-  {
-    type: "podcast",
-    name: "St. Paul's Boutique",
-    url: "https://www.tivolivredenburg.nl/studio/podcast/st-pauls-boutique/",
-    // Feed URL is resolved via Apple's podcast lookup; set config.feedUrl to
-    // override with a direct RSS URL.
-    config: { applePodcastId: 1809973533, maxEpisodesPerScan: 5 },
-  },
-  {
-    type: "musicmeter_rotation",
-    name: "Musicmeter Rotatielijst",
-    url: "https://www.musicmeter.nl/list/rotation",
-    config: { topAlbums: 10, tracksPerAlbum: 3 },
-  },
-];
+import { ensureDatabase } from "../src/db/bootstrap";
+import { DEFAULT_SOURCES } from "../src/db/defaultSources";
 
 async function main() {
-  for (const source of SOURCES) {
+  await ensureDatabase();
+  for (const source of DEFAULT_SOURCES) {
     const existing = await db.query.sources.findFirst({
       where: eq(schema.sources.name, source.name),
     });

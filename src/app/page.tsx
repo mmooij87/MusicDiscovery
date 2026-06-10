@@ -1,11 +1,13 @@
 import { desc, eq, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { ensureDatabase } from "@/db/bootstrap";
 import { Feed, type FeedTrack } from "@/components/Feed";
 import { spotifySearchUrl } from "@/lib/spotify";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
+  await ensureDatabase();
   const rows = await db
     .select({
       id: schema.tracks.id,

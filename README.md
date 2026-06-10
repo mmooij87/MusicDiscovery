@@ -20,15 +20,15 @@ iTunes/Deezer for a 30-second preview clip.
 
 ```bash
 npm install
-npm run db:push      # create the local SQLite database (data/app.db)
-npm run seed         # register the sources
 cp .env.example .env # then fill in the Spotify keys (see below)
 npm run scan         # fetch new music now
 npm run dev          # open http://localhost:3000 on your phone or desktop
 ```
 
-No keys at all also works: tracks are then matched via iTunes/Deezer only and
-the Spotify button falls back to a Spotify search link.
+The database (a local file in `data/`) and the sources are created
+automatically on first run. No keys at all also works: tracks are then matched
+via iTunes/Deezer only and the Spotify button falls back to a Spotify search
+link.
 
 ### Spotify API keys (free, 2 minutes)
 
@@ -66,25 +66,29 @@ so the parser in `src/scanner/` can be adjusted if a site changes).
 - ♥ saves a track as liked; viewed tracks are marked seen automatically.
 - Installable as a PWA: "Add to Home Screen" in your mobile browser.
 
-## Deploy (free): Vercel + Turso
+## Deploy (free): Vercel + Turso — no terminal needed
 
 The daily scan needs a database that outlives serverless invocations; the
-free [Turso](https://turso.tech) tier works with the same SQLite schema.
+free [Turso](https://turso.tech) tier works with the same SQLite schema. The
+whole deployment can be done in the browser — the app creates its own tables
+and sources on first run.
 
-1. **Turso**: create a database, note the `libsql://...` URL and create an
-   auth token (`turso db tokens create <db>`).
-2. Apply the schema + sources against it once, from your machine:
-   ```bash
-   DATABASE_URL=libsql://... DATABASE_AUTH_TOKEN=... npm run db:push
-   DATABASE_URL=libsql://... DATABASE_AUTH_TOKEN=... npm run seed
-   ```
-3. **Vercel**: import this repo, then set the environment variables
-   `DATABASE_URL`, `DATABASE_AUTH_TOKEN`, `SPOTIFY_CLIENT_ID`,
-   `SPOTIFY_CLIENT_SECRET` and `CRON_SECRET` (any random string,
-   e.g. `openssl rand -hex 24`).
-4. `vercel.json` already schedules **GET /api/scan** daily at 06:00 UTC;
-   Vercel sends the `CRON_SECRET` automatically. Trigger one manually with
-   `curl https://<your-app>.vercel.app/api/scan?secret=<CRON_SECRET>`.
+1. **Turso** ([app.turso.tech](https://app.turso.tech)): sign up, create a
+   database, and from the database page copy the **URL** (`libsql://...`) and
+   create a **token**.
+2. **Vercel** ([vercel.com/new](https://vercel.com/new)): sign up with GitHub
+   and import this repository. Before deploying, add the environment
+   variables:
+   - `DATABASE_URL` — the `libsql://...` URL from Turso
+   - `DATABASE_AUTH_TOKEN` — the Turso token
+   - `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` — see above
+   - `CRON_SECRET` — any long random string you make up
+3. Deploy, then visit
+   `https://<your-app>.vercel.app/api/scan?secret=<your CRON_SECRET>` once in
+   your browser — this first scan sets up the database and fills the feed.
+4. Done. `vercel.json` schedules the scan daily at 06:00 UTC automatically,
+   and the app itself lives at `https://<your-app>.vercel.app` — open it on
+   your phone and "Add to Home Screen".
 
 ## Scripts
 

@@ -1,5 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { ensureDatabase } from "@/db/bootstrap";
 import { mapLimit, sleep } from "@/lib/http";
 import { normKey } from "@/lib/normalize";
 import { findPreview } from "@/lib/preview";
@@ -27,6 +28,7 @@ export interface ScanSummary {
 }
 
 export async function runScan(): Promise<ScanSummary> {
+  await ensureDatabase();
   const [scanRow] = await db.insert(schema.scans).values({}).returning();
   const summary: ScanSummary = { sources: [], newTracks: 0, withPreview: 0, withSpotify: 0 };
 
