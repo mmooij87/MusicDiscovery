@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+}
+
+html,
+body {
+  height: 100%;
+  background: #000;
+}
+
+body {
+  font-family: var(--font-sans);
+}
+
+/* hide scrollbar inside the snap feed, the artwork IS the interface */
+.feed-scroll {
+  scrollbar-width: none;
+}
+.feed-scroll::-webkit-scrollbar {
+  display: none;
+}

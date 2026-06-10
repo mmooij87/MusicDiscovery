@@ -1,9 +1,12 @@
 # MusicDiscovery — Plan
 
-A personal music discovery app. Once a day it scans your sources (YouTube channels,
-podcasts with tracklists), finds new tracks, and presents them in a TikTok-style
-vertical feed: full-screen cover art, audio starts playing automatically, swipe to
-the next track, tap to open it in Spotify.
+A personal music discovery app. Once a day it scans your sources, finds new
+tracks, and presents them in a TikTok-style vertical feed: full-screen cover art,
+audio starts playing automatically, swipe to the next track, tap to open it in
+Spotify.
+
+> **Status:** Phase 1 is built — see README.md for setup. This document is the
+> original plan, updated to the confirmed choices.
 
 ## Confirmed decisions
 
@@ -11,7 +14,8 @@ the next track, tap to open it in Spotify.
 |---|---|
 | Playback in the feed | 30-second previews (no login needed; can upgrade to full Spotify playback later) |
 | Platform | Mobile-first web app / PWA (installable on your home screen) |
-| Hosting | Free cloud hosting (Vercel + a free Postgres database), daily cron job |
+| Hosting | Free cloud hosting (Vercel + free Turso SQLite database), daily cron job |
+| Sources | St. Paul's Boutique podcast (tracklists in show notes) + Musicmeter Rotatielijst (top 10 albums → 3 most popular tracks each) |
 
 ## How it works
 
