@@ -2,6 +2,7 @@ import { desc, eq, isNull, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { ensureDatabase } from "@/db/bootstrap";
 import { Feed, type FeedTrack } from "@/components/Feed";
+import { seededShuffle, todaySeed } from "@/lib/shuffle";
 import { spotifySearchUrl } from "@/lib/spotify";
 
 export const dynamic = "force-dynamic";
@@ -51,5 +52,13 @@ export default async function Home() {
     discoveredAt: r.discoveredAt?.slice(0, 10) ?? null,
   }));
 
-  return <Feed tracks={tracks} />;
+  // mix the sources instead of presenting them in blocks: unseen tracks
+  // first in a day-stable random order, already-seen ones shuffled after
+  const seed = todaySeed();
+  const ordered = [
+    ...seededShuffle(tracks.filter((t) => !t.seen), seed),
+    ...seededShuffle(tracks.filter((t) => t.seen), seed + 1),
+  ];
+
+  return <Feed tracks={ordered} />;
 }
