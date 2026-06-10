@@ -15,7 +15,8 @@ function authorized(req: NextRequest): boolean {
 export async function GET(req: NextRequest) {
   if (!authorized(req)) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   try {
-    const summary = await runScan();
+    const reprocess = req.nextUrl.searchParams.get("reprocess") ?? undefined;
+    const summary = await runScan({ reprocess });
     return NextResponse.json(summary);
   } catch (err) {
     return NextResponse.json(

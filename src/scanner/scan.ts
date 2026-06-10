@@ -1,4 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
+
 import { db, schema } from "@/db";
 import { ensureDatabase } from "@/db/bootstrap";
 import { mapLimit, sleep } from "@/lib/http";
@@ -19,6 +20,8 @@ export interface ScanSummary {
     name: string;
     candidates: number;
     newTracks: number;
+    /** candidates that matched neither Spotify nor a preview and were skipped */
+    dropped: string[];
     warnings: string[];
     error?: string;
   }[];
@@ -27,8 +30,32 @@ export interface ScanSummary {
   withSpotify: number;
 }
 
-export async function runScan(): Promise<ScanSummary> {
+export interface ScanOptions {
+  /** Forget which episodes/albums were already processed for this source
+   *  type ("podcast" | "musicmeter_rotation" | "all"), so they re-scan. */
+  reprocess?: string;
+}
+
+export async function runScan(options: ScanOptions = {}): Promise<ScanSummary> {
   await ensureDatabase();
+  if (options.reprocess) {
+    const types =
+      options.reprocess === "all"
+        ? (["podcast", "musicmeter_rotation"] as const)
+        : ([options.reprocess] as const);
+    const affected = await db.query.sources.findMany({
+      where: inArray(schema.sources.type, types as unknown as ("podcast" | "musicmeter_rotation")[]),
+      columns: { id: true },
+    });
+    if (affected.length > 0) {
+      await db.delete(schema.sourceItems).where(
+        inArray(
+          schema.sourceItems.sourceId,
+          affected.map((s) => s.id),
+        ),
+      );
+    }
+  }
   const [scanRow] = await db.insert(schema.scans).values({}).returning();
   const summary: ScanSummary = { sources: [], newTracks: 0, withPreview: 0, withSpotify: 0 };
 
@@ -40,6 +67,7 @@ export async function runScan(): Promise<ScanSummary> {
         name: source.name,
         candidates: 0,
         newTracks: 0,
+        dropped: [],
         warnings: [],
       };
       summary.sources.push(sourceSummary);
@@ -79,6 +107,8 @@ export async function runScan(): Promise<ScanSummary> {
             summary.newTracks++;
             if (inserted.previewUrl) summary.withPreview++;
             if (inserted.spotifyUrl) summary.withSpotify++;
+          } else {
+            sourceSummary.dropped.push(`${candidate.artist} - ${candidate.title}`);
           }
           await sleep(150); // stay polite to the catalog APIs
         });
