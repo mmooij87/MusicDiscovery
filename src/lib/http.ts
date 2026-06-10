@@ -52,11 +52,23 @@ function looksLikeBotChallenge(html: string): boolean {
   );
 }
 
+/** Public read-through mirrors, tried in order when a site blocks us. */
+const MIRRORS = [
+  (url: string) => ({
+    url: `https://r.jina.ai/${url}`,
+    headers: { "X-Return-Format": "html", Accept: "text/html" } as Record<string, string>,
+  }),
+  (url: string) => ({
+    url: `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    headers: { Accept: "text/html" } as Record<string, string>,
+  }),
+];
+
 /**
  * Fetch a page's HTML. When the site's bot protection blocks the direct
  * request — a 403/429/503, or a challenge page served with HTTP 200 —
- * retry once through the public Jina reader proxy, which fetches the page
- * from its own infrastructure and can return the raw HTML.
+ * retry through public read-through mirrors that fetch the page from their
+ * own infrastructure.
  */
 export async function fetchText(url: string, init?: RequestInit): Promise<string> {
   let directError: unknown = null;
@@ -68,21 +80,20 @@ export async function fetchText(url: string, init?: RequestInit): Promise<string
     const blocked = err instanceof HttpError && [403, 429, 503].includes(err.status);
     if (!blocked || !/^https?:\/\//.test(url)) throw err;
   }
-  try {
-    const res = await fetch(`https://r.jina.ai/${url}`, {
-      headers: { "X-Return-Format": "html", Accept: "text/html" },
-      signal: AbortSignal.timeout(45_000),
-    });
-    if (!res.ok) throw new HttpError(res.status, `r.jina.ai/${url}`);
-    const text = await res.text();
-    // an empty shell or another challenge page means the mirror failed too
-    if (looksLikeBotChallenge(text) || text.length < 500) {
-      throw new Error(`mirror returned no usable content for ${url}`);
+  for (const mirror of MIRRORS) {
+    try {
+      const m = mirror(url);
+      const res = await fetch(m.url, { headers: m.headers, signal: AbortSignal.timeout(45_000) });
+      if (!res.ok) continue;
+      const text = await res.text();
+      // an empty shell or another challenge page means this mirror failed too
+      if (looksLikeBotChallenge(text) || text.length < 500) continue;
+      return text;
+    } catch {
+      continue;
     }
-    return text;
-  } catch (mirrorError) {
-    throw directError ?? new Error(`Bot challenge for ${url} (mirror also failed: ${mirrorError})`);
   }
+  throw directError ?? new Error(`Bot challenge for ${url} (mirrors also failed)`);
 }
 
 export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {

@@ -93,10 +93,17 @@ export const podcastAdapter: SourceAdapter = {
         }
       }
 
+      // an episode gets ~3 weeks of daily retries; after that its tracklist
+      // has rolled off the website and we stop asking
+      const ageDays = item.pubDate
+        ? (Date.now() - new Date(item.pubDate).getTime()) / (24 * 3600 * 1000)
+        : 0;
+      const giveUp = Number.isFinite(ageDays) && ageDays > 21;
+
       if (tracks.length === 0) {
         const notesPreview = htmlToLines(html).join(" / ").slice(0, 250);
         result.warnings.push(
-          `No tracklist found for episode "${episodeTitle}" (episode number: ${epNum ?? "?"}, tried ${pageUrls.length} page(s): ${pageUrls.join(", ") || "none"}). Show notes start with: "${notesPreview}"`,
+          `No tracklist found for episode "${episodeTitle}" (episode number: ${epNum ?? "?"}, tried ${pageUrls.length} page(s): ${pageUrls.join(", ") || "none"})${giveUp ? " — episode is older than 21 days, giving up on it" : ""}. Show notes start with: "${notesPreview}"`,
         );
       }
 
@@ -109,9 +116,9 @@ export const podcastAdapter: SourceAdapter = {
           externalTitle: episodeTitle,
         });
       }
-      // only mark processed when we found tracks, so episodes whose pages
-      // failed (or whose format defeats the parser today) retry next scan
-      if (tracks.length > 0) {
+      // only mark processed when we found tracks (so fresh episodes retry
+      // daily) or when we've given up on an old episode
+      if (tracks.length > 0 || giveUp) {
         result.processedItems.push({ externalId, title: episodeTitle });
       }
     }

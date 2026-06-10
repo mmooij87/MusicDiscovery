@@ -77,16 +77,29 @@ export interface RymEntry {
 
 /** Latest Wayback Machine capture of a URL, served as the original HTML. */
 async function fetchWaybackSnapshot(url: string): Promise<{ html: string; timestamp: string }> {
-  const availability = await fetchJson<{
-    archived_snapshots?: { closest?: { url?: string; timestamp?: string } };
-  }>(`https://archive.org/wayback/available?url=${encodeURIComponent(url)}`);
-  const closest = availability.archived_snapshots?.closest;
-  if (!closest?.url) throw new Error("no snapshot available");
+  let timestamp: string | null = null;
+
+  // the CDX index is far more reliable than the availability API
+  try {
+    const rows = await fetchJson<string[][]>(
+      `https://web.archive.org/cdx/search/cdx?url=${encodeURIComponent(url)}&output=json&filter=statuscode:200&limit=-3`,
+    );
+    const last = rows.at(-1);
+    if (last && /^\d{14}$/.test(last[1])) timestamp = last[1];
+  } catch {
+    /* fall through to the availability API */
+  }
+  if (!timestamp) {
+    const availability = await fetchJson<{
+      archived_snapshots?: { closest?: { timestamp?: string } };
+    }>(`https://archive.org/wayback/available?url=${encodeURIComponent(url)}`);
+    timestamp = availability.archived_snapshots?.closest?.timestamp ?? null;
+  }
+  if (!timestamp) throw new Error("no snapshot available");
+
   // the id_ flag serves the page as captured, without the Wayback toolbar
-  const snapshotUrl = closest.url
-    .replace(/^http:/, "https:")
-    .replace(/\/(\d{14})\//, "/$1id_/");
-  return { html: await fetchText(snapshotUrl), timestamp: closest.timestamp ?? "unknown" };
+  const html = await fetchText(`https://web.archive.org/web/${timestamp}id_/${url}`);
+  return { html, timestamp };
 }
 
 export function parseRymChart(html: string): RymEntry[] {
