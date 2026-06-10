@@ -5,13 +5,17 @@ music and presents everything in a TikTok-style feed: full-screen cover art,
 30-second previews that start playing as you scroll, and one tap to open the
 track in Spotify.
 
-**Configured sources** (see `scripts/seed.ts`):
+**Configured sources** (see `src/db/defaultSources.ts`):
 
-- **St. Paul's Boutique** — weekly podcast; tracklists are extracted from the
-  episode show notes.
+- **St. Paul's Boutique** — weekly podcast; tracklists are read from the
+  per-episode "Tracklist #N" sections on the show's website (with the show
+  notes and linked episode pages as fallbacks).
 - **Musicmeter Rotatielijst** — top 10 albums of
   [musicmeter.nl/list/rotation](https://www.musicmeter.nl/list/rotation); per
-  album the 3 most popular tracks from its stats page.
+  album the 3 most-voted tracks from its stats page.
+- **RYM Top Songs** — top 20 of RateYourMusic's
+  [top songs of the current year](https://rateyourmusic.com/charts/top/song/2026/)
+  chart (the year advances automatically).
 
 Every found track is matched on Spotify (cover art + link) and against
 iTunes/Deezer for a 30-second preview clip.

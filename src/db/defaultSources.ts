@@ -17,4 +17,11 @@ export const DEFAULT_SOURCES: (typeof schema.sources.$inferInsert)[] = [
     url: "https://www.musicmeter.nl/list/rotation",
     config: { topAlbums: 10, tracksPerAlbum: 3 },
   },
+  {
+    type: "rym_chart",
+    name: "RYM Top Songs",
+    // {year} is replaced with the current year on every scan
+    url: "https://rateyourmusic.com/charts/top/song/{year}/",
+    config: { topSongs: 20 },
+  },
 ];

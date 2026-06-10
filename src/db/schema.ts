@@ -3,7 +3,7 @@ import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core
 
 export const sources = sqliteTable("sources", {
   id: integer("id").primaryKey({ autoIncrement: true }),
-  type: text("type", { enum: ["podcast", "musicmeter_rotation"] }).notNull(),
+  type: text("type", { enum: ["podcast", "musicmeter_rotation", "rym_chart"] }).notNull(),
   name: text("name").notNull(),
   url: text("url").notNull(),
   config: text("config", { mode: "json" }).$type<Record<string, unknown>>().default({}),

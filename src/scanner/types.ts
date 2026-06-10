@@ -10,7 +10,7 @@ export interface Candidate {
 
 export interface SourceRecord {
   id: number;
-  type: "podcast" | "musicmeter_rotation";
+  type: "podcast" | "musicmeter_rotation" | "rym_chart";
   name: string;
   url: string;
   config: Record<string, unknown>;

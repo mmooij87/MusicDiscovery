@@ -7,11 +7,13 @@ import { findPreview } from "@/lib/preview";
 import { findOnSpotify } from "@/lib/spotify";
 import { musicmeterAdapter } from "./musicmeter";
 import { podcastAdapter } from "./podcast";
+import { rymChartAdapter } from "./rym";
 import type { Candidate, SourceAdapter, SourceRecord } from "./types";
 
 const adapters: Record<SourceRecord["type"], SourceAdapter> = {
   podcast: podcastAdapter,
   musicmeter_rotation: musicmeterAdapter,
+  rym_chart: rymChartAdapter,
 };
 
 export interface ScanSummary {
@@ -40,12 +42,11 @@ export interface ScanOptions {
 export async function runScan(options: ScanOptions = {}): Promise<ScanSummary> {
   await ensureDatabase();
   if (options.reprocess) {
+    const allTypes = ["podcast", "musicmeter_rotation", "rym_chart"] as const;
     const types =
-      options.reprocess === "all"
-        ? (["podcast", "musicmeter_rotation"] as const)
-        : ([options.reprocess] as const);
+      options.reprocess === "all" ? [...allTypes] : ([options.reprocess] as string[]);
     const affected = await db.query.sources.findMany({
-      where: inArray(schema.sources.type, types as unknown as ("podcast" | "musicmeter_rotation")[]),
+      where: inArray(schema.sources.type, types as (typeof allTypes)[number][]),
       columns: { id: true },
     });
     if (affected.length > 0) {
@@ -107,11 +108,11 @@ export async function runScan(options: ScanOptions = {}): Promise<ScanSummary> {
         const existingKeys = new Set(existing.map((t) => t.normKey));
         const newCandidates = fresh.filter((c) => !existingKeys.has(normKey(c.artist, c.title)));
 
-        // Musicmeter candidates are precise (a named track of a charting
-        // album), so keep them even before Spotify/iTunes know the song —
-        // they get enriched on later scans. Podcast candidates come from
-        // heuristic text parsing, so unmatched ones are likely noise.
-        const keepUnmatched = source.type === "musicmeter_rotation";
+        // Chart candidates (Musicmeter, RYM) are precise — a named track on
+        // a published ranking — so keep them even before Spotify/iTunes know
+        // the song; they get enriched on later scans. Podcast candidates
+        // come from heuristic text parsing, so unmatched ones are likely noise.
+        const keepUnmatched = source.type !== "podcast";
 
         await mapLimit(newCandidates, 3, async (candidate) => {
           const inserted = await resolveAndStore(candidate, source.id, keepUnmatched);

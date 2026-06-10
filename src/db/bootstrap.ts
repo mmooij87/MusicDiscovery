@@ -75,8 +75,12 @@ async function bootstrap(): Promise<void> {
   for (const statement of DDL) {
     await db.run(sql.raw(statement));
   }
-  const existing = await db.select({ id: schema.sources.id }).from(schema.sources).limit(1);
-  if (existing.length === 0) {
-    await db.insert(schema.sources).values(DEFAULT_SOURCES);
+  // add any default source that isn't registered yet (matched by name), so
+  // new sources added to the code reach existing databases on deploy
+  const existing = await db.select({ name: schema.sources.name }).from(schema.sources);
+  const known = new Set(existing.map((s) => s.name));
+  const missing = DEFAULT_SOURCES.filter((s) => !known.has(s.name));
+  if (missing.length > 0) {
+    await db.insert(schema.sources).values(missing);
   }
 }
