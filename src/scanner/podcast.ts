@@ -32,7 +32,20 @@ export const podcastAdapter: SourceAdapter = {
 
     const result: AdapterResult = { candidates: [], processedItems: [], warnings: [] };
     const maxEpisodes = (source.config.maxEpisodesPerScan as number) ?? 5;
-    let episodeIndex: EpisodeLink[] | null = null;
+    const indexUrl = (source.config.episodeIndexUrl as string) ?? source.url;
+
+    // the podcast's website page, fetched lazily and at most once per scan —
+    // it holds the per-episode "Tracklist #N" sections and the episode links
+    let indexHtml: string | null = null;
+    const getIndexHtml = async (): Promise<string> => {
+      if (indexHtml === null) {
+        indexHtml = await fetchText(indexUrl).catch((err) => {
+          result.warnings.push(`Could not load podcast page ${indexUrl}: ${err}`);
+          return "";
+        });
+      }
+      return indexHtml;
+    };
 
     let inspected = 0;
     for (const item of items) {
@@ -45,15 +58,22 @@ export const podcastAdapter: SourceAdapter = {
       const html = item["content:encoded"] ?? item.description ?? "";
       let tracks = extractTracklist(html);
 
-      // tracklist not in the show notes? try the episode's webpage(s)
+      // 1) tracklist not in the show notes? look for a "Tracklist #N"
+      //    section on the podcast's website page
+      const epNum = episodeNumber(episodeTitle);
+      if (tracks.length === 0 && epNum) {
+        tracks = extractTracklistForEpisode(await getIndexHtml(), epNum);
+      }
+
+      // 2) still nothing? follow the episode's own webpage(s)
+      let pageUrls: string[] = [];
       if (tracks.length === 0) {
-        if (episodeIndex === null) {
-          episodeIndex = await fetchEpisodeIndex(source).catch((err) => {
-            result.warnings.push(`Could not load episode index ${source.url}: ${err}`);
-            return [];
-          });
-        }
-        const pageUrls = candidateEpisodePages(item, episodeIndex);
+        const episodeIndex = parseEpisodeLinks(await getIndexHtml(), indexUrl);
+        const noteLinks = extractLinks(html, source.url);
+        pageUrls = [
+          ...noteLinks,
+          ...candidateEpisodePages(item, episodeIndex).filter((u) => !noteLinks.includes(u)),
+        ].slice(0, 4);
         for (const pageUrl of pageUrls) {
           try {
             const pageHtml = await fetchText(pageUrl);
@@ -63,12 +83,13 @@ export const podcastAdapter: SourceAdapter = {
             result.warnings.push(`Could not fetch episode page ${pageUrl}: ${err}`);
           }
         }
-        if (tracks.length === 0) {
-          const notesPreview = htmlToLines(html).join(" / ").slice(0, 250);
-          result.warnings.push(
-            `No tracklist found for episode "${episodeTitle}" (tried ${pageUrls.length} page(s): ${pageUrls.join(", ") || "none"}). Show notes start with: "${notesPreview}"`,
-          );
-        }
+      }
+
+      if (tracks.length === 0) {
+        const notesPreview = htmlToLines(html).join(" / ").slice(0, 250);
+        result.warnings.push(
+          `No tracklist found for episode "${episodeTitle}" (episode number: ${epNum ?? "?"}, tried ${pageUrls.length} page(s): ${pageUrls.join(", ") || "none"}). Show notes start with: "${notesPreview}"`,
+        );
       }
 
       const date = item.pubDate ? new Date(item.pubDate).toISOString().slice(0, 10) : "";
@@ -130,18 +151,105 @@ interface EpisodeLink {
   text: string;
 }
 
+/** Hosts that never host a tracklist page (players, socials, stores). */
+const LINK_HOST_BLOCKLIST =
+  /spotify\.com|apple\.com|podbean\.com|soundcloud\.com|youtube\.com|youtu\.be|instagram\.com|facebook\.com|twitter\.com|x\.com|tiktok\.com|linktr\.ee/i;
+
 /**
- * The podcast's website (source.url) lists its episodes with links to the
- * per-episode pages that hold the tracklists. Collect links that stay within
- * the podcast's own path.
+ * Pull URLs out of show-notes HTML ("Benieuwd naar de tracklist? Check ze
+ * via …"). Links on the podcast's own website come first; the podcast index
+ * page itself is excluded so we don't read another episode's tracklist.
  */
-async function fetchEpisodeIndex(source: SourceRecord): Promise<EpisodeLink[]> {
-  const indexUrl = (source.config.episodeIndexUrl as string) ?? source.url;
-  const html = await fetchText(indexUrl);
+export function extractLinks(html: string, podcastSiteUrl: string): string[] {
+  const found = new Set<string>();
+  for (const m of html.matchAll(/href=["']([^"']+)["']/gi)) found.add(m[1]);
+  for (const m of html.matchAll(/https?:\/\/[^\s"'<>()\\]+/g)) found.add(m[0]);
+
+  let siteHost: string | null = null;
+  let sitePath = "";
+  try {
+    const u = new URL(podcastSiteUrl);
+    siteHost = u.hostname.replace(/^www\./, "");
+    sitePath = u.pathname.replace(/\/$/, "");
+  } catch {
+    /* keep null */
+  }
+
+  const own: string[] = [];
+  const other: string[] = [];
+  for (const raw of found) {
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      continue;
+    }
+    if (!/^https?:$/.test(url.protocol)) continue;
+    if (LINK_HOST_BLOCKLIST.test(url.hostname)) continue;
+    const host = url.hostname.replace(/^www\./, "");
+    const path = url.pathname.replace(/\/$/, "");
+    if (siteHost && host === siteHost) {
+      if (path === sitePath || path === "") continue; // the index itself
+      own.push(url.href);
+    } else {
+      other.push(url.href);
+    }
+  }
+  return [...own, ...other];
+}
+
+/** "#281: Blood Orange…" or "281 - …" → "281". */
+export function episodeNumber(title: string): string | null {
+  return title.match(/#\s*(\d{1,4})\b/)?.[1] ?? title.match(/^\s*(\d{1,4})\b/)?.[1] ?? null;
+}
+
+/**
+ * Extract one episode's tracklist from the podcast's website page, which
+ * lists sections like "Tracklist #281" followed by "Artist - Title" lines
+ * (St. Paul's Boutique style). The section ends at the next
+ * "Tracklist"/"Shownotes" heading or the first non-track line.
+ */
+export function extractTracklistForEpisode(
+  pageHtml: string,
+  epNum: string,
+): { artist: string; title: string }[] {
+  if (!pageHtml) return [];
+  const $ = cheerio.load(pageHtml);
+  $("nav, header, footer, script, style, noscript, aside, form").remove();
+  const scope = $("main, article, [class*=content], #content").first();
+  const lines = htmlToLines((scope.length ? scope : $("body")).html() ?? "");
+
+  const startRe = new RegExp(`^tracklist\\s*(?:#|nr\\.?\\s*|aflevering\\s*)?${epNum}\\b`, "i");
+  const start = lines.findIndex((l) => startRe.test(l));
+  if (start === -1) return [];
+
+  const tracks: { artist: string; title: string }[] = [];
+  for (let i = start + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^(tracklist|shownotes)\b/i.test(line)) break;
+    // a heading rendered inline can glue onto the last track ("…SinnermanShownotes")
+    const track = parseTrackLine(line.replace(/shownotes\s*$/i, "").trim());
+    if (track) tracks.push(track);
+    else if (tracks.length > 0) break;
+  }
+  return tracks;
+}
+
+/**
+ * The podcast's website lists its episodes with links to the per-episode
+ * pages. Collect links under the podcast's own path, or elsewhere on the
+ * site mentioning the podcast's slug.
+ */
+export function parseEpisodeLinks(html: string, indexUrl: string): EpisodeLink[] {
+  if (!html) return [];
   const $ = cheerio.load(html);
   const base = new URL(indexUrl);
   const links: EpisodeLink[] = [];
   const seen = new Set<string>();
+
+  // the podcast's slug, e.g. "st-pauls-boutique" — episode pages may live
+  // beside the index (/podcast/st-pauls-boutique-281-…) instead of under it
+  const slug = base.pathname.split("/").filter(Boolean).pop() ?? "";
 
   $("a[href]").each((_, el) => {
     const href = $(el).attr("href")!;
@@ -151,9 +259,12 @@ async function fetchEpisodeIndex(source: SourceRecord): Promise<EpisodeLink[]> {
     } catch {
       return;
     }
-    // same site, deeper than the index page itself
     if (abs.hostname !== base.hostname) return;
-    if (!abs.pathname.startsWith(base.pathname) || abs.pathname === base.pathname) return;
+    const underIndex = abs.pathname.startsWith(base.pathname);
+    const mentionsSlug = slug !== "" && abs.pathname.includes(slug);
+    if (!underIndex && !mentionsSlug) return;
+    // not the index page itself
+    if (abs.pathname.replace(/\/$/, "") === base.pathname.replace(/\/$/, "")) return;
     if (seen.has(abs.href)) return;
     seen.add(abs.href);
     links.push({ href: abs.href, text: $(el).text().replace(/\s+/g, " ").trim() });

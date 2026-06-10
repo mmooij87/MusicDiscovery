@@ -1,5 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
-
+import { and, eq, gt, inArray, isNull } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { ensureDatabase } from "@/db/bootstrap";
 import { mapLimit, sleep } from "@/lib/http";
@@ -28,6 +27,8 @@ export interface ScanSummary {
   newTracks: number;
   withPreview: number;
   withSpotify: number;
+  /** previously unmatched tracks that gained a Spotify link/preview this scan */
+  enriched: number;
 }
 
 export interface ScanOptions {
@@ -57,7 +58,13 @@ export async function runScan(options: ScanOptions = {}): Promise<ScanSummary> {
     }
   }
   const [scanRow] = await db.insert(schema.scans).values({}).returning();
-  const summary: ScanSummary = { sources: [], newTracks: 0, withPreview: 0, withSpotify: 0 };
+  const summary: ScanSummary = {
+    sources: [],
+    newTracks: 0,
+    withPreview: 0,
+    withSpotify: 0,
+    enriched: 0,
+  };
 
   try {
     const sources = await db.query.sources.findMany({ where: eq(schema.sources.enabled, true) });
@@ -100,8 +107,14 @@ export async function runScan(options: ScanOptions = {}): Promise<ScanSummary> {
         const existingKeys = new Set(existing.map((t) => t.normKey));
         const newCandidates = fresh.filter((c) => !existingKeys.has(normKey(c.artist, c.title)));
 
+        // Musicmeter candidates are precise (a named track of a charting
+        // album), so keep them even before Spotify/iTunes know the song —
+        // they get enriched on later scans. Podcast candidates come from
+        // heuristic text parsing, so unmatched ones are likely noise.
+        const keepUnmatched = source.type === "musicmeter_rotation";
+
         await mapLimit(newCandidates, 3, async (candidate) => {
-          const inserted = await resolveAndStore(candidate, source.id);
+          const inserted = await resolveAndStore(candidate, source.id, keepUnmatched);
           if (inserted) {
             sourceSummary.newTracks++;
             summary.newTracks++;
@@ -123,6 +136,8 @@ export async function runScan(options: ScanOptions = {}): Promise<ScanSummary> {
         sourceSummary.error = err instanceof Error ? err.message : String(err);
       }
     }
+
+    summary.enriched = await enrichUnmatchedTracks();
 
     await db
       .update(schema.scans)
@@ -146,6 +161,49 @@ export async function runScan(options: ScanOptions = {}): Promise<ScanSummary> {
   }
 }
 
+/**
+ * Tracks stored without a Spotify match or preview (fresh releases the
+ * catalogs didn't know yet) get another lookup on every scan for 45 days.
+ */
+async function enrichUnmatchedTracks(): Promise<number> {
+  const cutoff = new Date(Date.now() - 45 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const stale = await db.query.tracks.findMany({
+    where: and(
+      isNull(schema.tracks.spotifyId),
+      isNull(schema.tracks.previewUrl),
+      isNull(schema.tracks.hiddenAt),
+      gt(schema.tracks.createdAt, cutoff),
+    ),
+    limit: 25,
+  });
+
+  let enriched = 0;
+  for (const track of stale) {
+    const spotify = await findOnSpotify(track.artist, track.title).catch(() => null);
+    const artist = spotify?.artist ?? track.artist;
+    const title = spotify?.title ?? track.title;
+    const preview = await findPreview(artist, title).catch(() => null);
+    if (!spotify && !preview) continue;
+
+    await db
+      .update(schema.tracks)
+      .set({
+        artist,
+        title,
+        album: spotify?.album ?? track.album,
+        spotifyId: spotify?.spotifyId ?? null,
+        spotifyUrl: spotify?.spotifyUrl ?? null,
+        artworkUrl: spotify?.artworkUrl ?? preview?.artworkUrl ?? null,
+        previewUrl: preview?.previewUrl ?? null,
+        previewSource: preview?.previewSource ?? null,
+      })
+      .where(eq(schema.tracks.id, track.id));
+    enriched++;
+    await sleep(150);
+  }
+  return enriched;
+}
+
 function dedupeCandidates(candidates: Candidate[]): Candidate[] {
   const seen = new Set<string>();
   return candidates.filter((c) => {
@@ -156,7 +214,7 @@ function dedupeCandidates(candidates: Candidate[]): Candidate[] {
   });
 }
 
-async function resolveAndStore(candidate: Candidate, sourceId: number) {
+async function resolveAndStore(candidate: Candidate, sourceId: number, keepUnmatched = false) {
   const spotify = await findOnSpotify(candidate.artist, candidate.title).catch(() => null);
   // prefer Spotify's canonical spelling once matched
   const artist = spotify?.artist ?? candidate.artist;
@@ -164,8 +222,10 @@ async function resolveAndStore(candidate: Candidate, sourceId: number) {
   const preview = await findPreview(artist, title).catch(() => null);
 
   // Without either a Spotify match or a preview the card would be dead
-  // weight in the feed, so skip those candidates (likely parse noise anyway).
-  if (!spotify && !preview) return null;
+  // weight in the feed, so skip those candidates — unless the source is
+  // trusted (keepUnmatched): brand-new releases reach the catalogs days
+  // later and get filled in by enrichUnmatchedTracks on a future scan.
+  if (!spotify && !preview && !keepUnmatched) return null;
 
   const [track] = await db
     .insert(schema.tracks)
