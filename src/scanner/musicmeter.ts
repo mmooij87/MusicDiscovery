@@ -160,9 +160,10 @@ function extractRankedTitles($: cheerio.CheerioAPI, container: cheerio.Cheerio<A
         else if (t.length > title.length) title = t;
       });
     } else {
-      // list item like "Trackname (42)"
+      // list item like "Trackname (23 stemmen)", "Trackname (1 stem)", "Trackname (42)"
       const t = $(el).text().replace(/\s+/g, " ").trim();
-      const m = t.match(/^(.*?)\s*[\(\[]?(\d+)[\)\]]?$/);
+      const m =
+        t.match(/^(.+?)\s*[([](\d+)[^)\]]*[)\]]\s*$/) ?? t.match(/^(.+?)\s+(\d+)$/);
       if (m) {
         title = m[1].trim();
         count = parseInt(m[2], 10);

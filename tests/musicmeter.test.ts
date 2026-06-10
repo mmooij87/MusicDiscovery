@@ -31,9 +31,22 @@ describe("parseStatsTitle", () => {
 });
 
 describe("parsePopularTracks", () => {
-  it("returns tracks sorted by popularity, not the ratings table", () => {
+  it("reads the 'Favoriete tracks' list with (N stemmen) counts, sorted by votes", () => {
     const tracks = parsePopularTracks(statsHtml);
     expect(tracks.slice(0, 3)).toEqual(["Flood", "Free", "Young"]);
     expect(tracks).not.toContain("5 sterren");
+    // tab navigation links must not be read as tracks
+    expect(tracks).not.toContain("informatie");
+  });
+
+  it("also handles a (title, count) table layout as fallback", () => {
+    const html = `<html><body>
+      <h3>Populairste tracks</h3>
+      <table>
+        <tr><td>Naraka</td><td>18</td></tr>
+        <tr><td>Prophecy at 1420 MHz</td><td>23</td></tr>
+      </table>
+    </body></html>`;
+    expect(parsePopularTracks(html)).toEqual(["Prophecy at 1420 MHz", "Naraka"]);
   });
 });
